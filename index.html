@@ -611,6 +611,15 @@ window.addEventListener("pagehide", payRound);
 
 /* ---------- menu ---------- */
 var picks = document.getElementById("picks");
+/* The 3D one lives on its own page (it needs the whole screen). */
+(function(){
+  var a = document.createElement("a"); a.className = "pick"; a.href = "dash.html"; a.style.textDecoration = "none"; a.style.color = "inherit";
+  var ic = document.createElement("span"); ic.className = "ic"; ic.style.background = "linear-gradient(135deg,#06b6d4,#8b5cf6,#f472b6)"; ic.textContent = "🌌";
+  var n = document.createElement("b"); n.textContent = "Star Dash 3D ✨ New";
+  var sm = document.createElement("small"); sm.textContent = "Race through space in 3D - dodge, jump, grab the stars";
+  var e = document.createElement("em"); var best = read("hl.arc.dash3d", 0); e.textContent = best ? "Your best: " + best : "30 min free a day, then 5p per half hour";
+  a.appendChild(ic); a.appendChild(n); a.appendChild(sm); a.appendChild(e); picks.appendChild(a);
+})();
 GAMES.forEach(function(gm){
   var b = document.createElement("button"); b.type = "button"; b.className = "pick";
   var ic = document.createElement("span"); ic.className = "ic"; ic.style.background = gm.bg; ic.textContent = gm.icon;
@@ -635,7 +644,7 @@ function open(gm){
   history.replaceState(null, "", "#" + gm.id);
 }
 function back(){ cancelAnimationFrame(raf); payRound(); cur = null; keys = {}; stage.classList.remove("on"); menu.hidden = false; history.replaceState(null, "", location.pathname + location.search);
-  /* refresh the "your best" lines */ [].forEach.call(picks.children, function(b, i){ var best = read("hl.arc." + GAMES[i].id, 0); b.querySelector("em").textContent = best ? "Your best: " + best : "Not played yet"; }); }
+  /* refresh the "your best" lines */ [].forEach.call(picks.children, function(b, i){ var gm = GAMES[i - 1]; if (!gm) return; var best = read("hl.arc." + gm.id, 0); b.querySelector("em").textContent = best ? "Your best: " + best : "Not played yet"; }); }
 /* One step is 1/60th of a second, whatever the screen. Without this a
    120Hz iPad ran every game at double speed. After a stall (tab away,
    slow phone) it catches up a little, never by more than 3 steps. */
