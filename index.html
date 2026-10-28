@@ -45,6 +45,7 @@ canvas{background:#0b1022;border-radius:14px;max-width:100%;touch-action:none;di
 </style>
 <script src="https://civilinitiatives.org/auth-store.js?b=20261026a"></script>
 <script src="https://civilinitiatives.org/games-gate.js?b=20261027h" data-kind="fun"></script>
+<script src="https://civilinitiatives.org/earn.js?b=20261028b"></script>
 </head>
 <body>
 <div class="labbar">Lab - things here are being tried out</div>
@@ -602,6 +603,11 @@ var pen = { id:"penalty", name:"Penalty Shootout", icon:"⚽", bg:"#15803d", sub
 };
 
 var GAMES = [robin, cata, toss, pen, plane, drop, dbl, rocks];
+/* Pence: when a round ends (the game restarts, or you go back to the menu),
+   tell the server how it went - it pays a few pence (earn.js). */
+function payRound(){ if (cur && score > 0 && window.HEHEarn) HEHEarn.played(cur.id, score); score = 0; }
+GAMES.forEach(function(gm){ var s0 = gm.start; gm.start = function(){ if (cur === gm) payRound(); return s0.apply(this, arguments); }; });
+window.addEventListener("pagehide", payRound);
 
 /* ---------- menu ---------- */
 var picks = document.getElementById("picks");
@@ -628,7 +634,7 @@ function open(gm){
   gm.start(); try { cv.focus({ preventScroll: true }); } catch(err){ cv.focus(); } loop();
   history.replaceState(null, "", "#" + gm.id);
 }
-function back(){ cancelAnimationFrame(raf); cur = null; keys = {}; stage.classList.remove("on"); menu.hidden = false; history.replaceState(null, "", location.pathname + location.search);
+function back(){ cancelAnimationFrame(raf); payRound(); cur = null; keys = {}; stage.classList.remove("on"); menu.hidden = false; history.replaceState(null, "", location.pathname + location.search);
   /* refresh the "your best" lines */ [].forEach.call(picks.children, function(b, i){ var best = read("hl.arc." + GAMES[i].id, 0); b.querySelector("em").textContent = best ? "Your best: " + best : "Not played yet"; }); }
 /* One step is 1/60th of a second, whatever the screen. Without this a
    120Hz iPad ran every game at double speed. After a stall (tab away,
