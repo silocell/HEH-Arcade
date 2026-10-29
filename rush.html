@@ -162,6 +162,22 @@ var sfx = {
   zone: function(){ beep(440, .15, "triangle", .06); setTimeout(function(){ beep(660, .2, "triangle", .06); }, 120); }
 };
 
+/* ================= how fancy to draw =================
+   low  - phones: no glow, fewer particles, easy on the battery
+   mid  - tablets and laptops
+   high - the Windows app and strong computers: glow, nebula clouds,
+          more particles, shockwaves.
+   ?q=low|mid|high forces one (the Windows app asks for high). */
+var QUAL = (function(){
+  var f = (new URLSearchParams(location.search).get("q") || "").toLowerCase();
+  if (f === "low" || f === "mid" || f === "high") return f;
+  var touch = matchMedia("(pointer:coarse)").matches, small = Math.min(screen.width, screen.height) < 600;
+  if (touch && small) return "low";
+  if (!touch && (navigator.hardwareConcurrency || 4) >= 8) return "high";
+  return "mid";
+})();
+var Q = { low:{ parts:.45, glow:false, neb:false, layers:2 }, mid:{ parts:1, glow:true, neb:false, layers:3 }, high:{ parts:1.8, glow:true, neb:true, layers:4 } }[QUAL];
+
 /* ================= the game ================= */
 /* World units: the screen is always 1000 units tall; its width depends on
    the shape of the screen. Speeds are units per second. */
@@ -191,7 +207,7 @@ var things = [], parts = [], pops = [], nextAt = 0, sinceStar = 0;
 var shieldOn = false, magnetT = 0, boostT = 0, invulnT = 0, puGap = 0;
 var bgLayers = [];
 function makeBg(){
-  bgLayers = [0.08, 0.22, 0.5].map(function(sp, k){
+  bgLayers = [0.04, 0.08, 0.22, 0.5].slice(4 - Q.layers).map(function(sp, k){
     var arr = [];
     for (var i = 0; i < 60 + k * 10; i++) arr.push({ x: Math.random() * 3000, y: Math.random() * H, s: 1 + k * .9 + Math.random() * 1.2 });
     return { sp: sp, stars: arr };
@@ -278,6 +294,7 @@ function hits(t){
 }
 
 function burst(x, y, col, n, sp){
+  n = Math.round(n * Q.parts);
   for (var i = 0; i < n; i++) { var a = Math.random() * 6.283, v = rnd(.3, 1) * sp; parts.push({ x:x, y:y, vx:Math.cos(a) * v, vy:Math.sin(a) * v, t:rnd(.4, .9), t0:1, c:col, s:rnd(3, 7) }); }
 }
 function pop(x, y, txt, col){ pops.push({ x:x, y:y, txt:txt, c:col || "#fde68a", t:.9 }); }
@@ -368,7 +385,7 @@ function update(dt){
   if (R.y > H - 50) { R.y = H - 50; R.vy = Math.min(0, R.vy); }
   R.tilt += ((R.vy / 1000) * .5 - R.tilt) * Math.min(1, dt * 10);
 
-  if (R.thrust || boostT > 0) for (var e = 0; e < (boostT > 0 ? 4 : 2); e++)
+  if (R.thrust || boostT > 0) for (var e = 0; e < Math.max(1, Math.round((boostT > 0 ? 4 : 2) * Q.parts)); e++)
     parts.push({ x:R.x - 44, y:R.y + rnd(-8, 8), vx:-rnd(300, 600) - v * .3, vy:rnd(-60, 60) + 200, t:rnd(.2, .45), t0:.45, c: boostT > 0 ? "#f97316" : pick(["#fbbf24", "#f97316", "#fde68a"]), s:rnd(5, 10) });
 
   for (var i = things.length - 1; i >= 0; i--) {
@@ -432,7 +449,7 @@ function drawRocket(){
 function drawStar(t){
   var s = 1 + Math.sin(t.t) * .12;
   ctx.save(); ctx.translate(t.x, t.y); ctx.rotate(t.t * .3); ctx.scale(s, s);
-  ctx.shadowColor = "#fde047"; ctx.shadowBlur = 16;
+  ctx.shadowColor = "#fde047"; ctx.shadowBlur = Q.glow ? 16 : 0;
   ctx.fillStyle = "#fde047"; ctx.beginPath();
   for (var i = 0; i < 10; i++) { var r = i % 2 ? 9 : 21, a = i * Math.PI / 5 - Math.PI / 2; ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r); }
   ctx.closePath(); ctx.fill(); ctx.shadowBlur = 0;
@@ -442,7 +459,7 @@ function drawStar(t){
 function drawZap(t, col){
   var c = Math.cos(t.a) * t.len / 2, s = Math.sin(t.a) * t.len / 2, ax = t.x - c, ay = t.y - s, bx = t.x + c, by = t.y + s;
   ctx.save();
-  ctx.shadowColor = col; ctx.shadowBlur = 24; ctx.strokeStyle = col; ctx.lineWidth = 6; ctx.globalAlpha = .55;
+  ctx.shadowColor = col; ctx.shadowBlur = Q.glow ? 24 : 0; ctx.strokeStyle = col; ctx.lineWidth = 6; ctx.globalAlpha = .55;
   ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
   ctx.globalAlpha = 1; ctx.lineWidth = 3; ctx.strokeStyle = "#ffffff"; ctx.beginPath(); ctx.moveTo(ax, ay);
   var n = Math.max(4, Math.floor(t.len / 34)), nx = -s / (t.len / 2), ny = c / (t.len / 2);
@@ -470,7 +487,7 @@ function drawGate(t, col){
   ctx.save();
   var g = ctx.createLinearGradient(x0, 0, x0 + t.w, 0); g.addColorStop(0, "#1f2937"); g.addColorStop(.5, "#4b5563"); g.addColorStop(1, "#111827");
   ctx.fillStyle = g; ctx.fillRect(x0, -20, t.w, top + 20); ctx.fillRect(x0, bot, t.w, H - bot + 20);
-  ctx.shadowColor = col; ctx.shadowBlur = 18; ctx.fillStyle = col;
+  ctx.shadowColor = col; ctx.shadowBlur = Q.glow ? 18 : 0; ctx.fillStyle = col;
   ctx.fillRect(x0 - 6, top - 14, t.w + 12, 14); ctx.fillRect(x0 - 6, bot, t.w + 12, 14);
   ctx.shadowBlur = 0; ctx.fillStyle = "rgba(255,255,255,.08)";
   for (var y = top - 70; y > -20; y -= 70) ctx.fillRect(x0 + 8, y, t.w - 16, 4);
@@ -481,7 +498,7 @@ function drawPu(t){
   var b = Math.sin(t.t * 4) * 6;
   ctx.save(); ctx.translate(t.x, t.y + b);
   var col = t.type === "shield" ? "#60a5fa" : t.type === "magnet" ? "#f472b6" : "#f97316";
-  ctx.shadowColor = col; ctx.shadowBlur = 22; ctx.strokeStyle = col; ctx.lineWidth = 4; ctx.fillStyle = "rgba(255,255,255,.1)";
+  ctx.shadowColor = col; ctx.shadowBlur = Q.glow ? 22 : 0; ctx.strokeStyle = col; ctx.lineWidth = 4; ctx.fillStyle = "rgba(255,255,255,.1)";
   ctx.beginPath(); ctx.arc(0, 0, 34, 0, 6.283); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0;
   ctx.font = "34px system-ui, 'Apple Color Emoji', 'Segoe UI Emoji'"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
   ctx.fillText(t.type === "shield" ? "🛡" : t.type === "magnet" ? "🧲" : "🔥", 0, 2);
@@ -505,6 +522,15 @@ function draw(now){
   ctx.strokeStyle = z.star; ctx.globalAlpha = .35; ctx.lineWidth = 6;
   ctx.beginPath(); ctx.ellipse(px, 300, pr * 1.7, pr * .32, -.35, 0, 6.283); ctx.stroke();
   ctx.restore();
+  /* nebula clouds (high only) */
+  if (Q.neb) {
+    for (var nb = 0; nb < 3; nb++) {
+      var nx = ((nb * 900 + 300) - dist * (.03 + nb * .015)) % (W + 1400); if (nx < -700) nx += W + 1400;
+      var ny = 200 + nb * 280, ng = ctx.createRadialGradient(nx, ny, 0, nx, ny, 520);
+      ng.addColorStop(0, z.zap + "26"); ng.addColorStop(1, z.zap + "00");
+      ctx.fillStyle = ng; ctx.fillRect(nx - 520, ny - 520, 1040, 1040);
+    }
+  }
   /* star layers */
   bgLayers.forEach(function(L){
     ctx.fillStyle = z.star; ctx.globalAlpha = .25 + L.sp;
@@ -518,6 +544,7 @@ function draw(now){
     if (t.k === "star") drawStar(t); else if (t.k === "zap") drawZap(t, z.zap); else if (t.k === "rock") drawRock(t); else if (t.k === "gate") drawGate(t, z.zap); else drawPu(t);
   }
   if (state !== "dead") drawRocket();
+  if (Q.neb && state === "dead") { var age = Math.max(0, (now - deadAt) / 1000); if (age < .8) { ctx.strokeStyle = "rgba(251,191,36," + (1 - age / .8) + ")"; ctx.lineWidth = 10 * (1 - age); ctx.beginPath(); ctx.arc(R.x, R.y, age * 700, 0, 6.283); ctx.stroke(); } }
   parts.forEach(function(p){ ctx.globalAlpha = Math.max(0, p.t / p.t0); ctx.fillStyle = p.c; ctx.beginPath(); ctx.arc(p.x, p.y, p.s * (p.t / p.t0 + .3), 0, 6.283); ctx.fill(); });
   ctx.globalAlpha = 1;
   ctx.font = "800 30px system-ui"; ctx.textAlign = "center";
