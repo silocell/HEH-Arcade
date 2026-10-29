@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rocket Rush</title>
+<link rel="icon" type="image/png" href="https://civilinitiatives.org/favicon.png">
+<style>
+/* Rocket Rush - hold to fly, let go to fall. Dodge zappers, asteroids
+   and gates, grab stars and power-ups, and see how far you get.
+   The first half hour each day is free; after that each half hour is 5p
+   (the server keeps count, play_time.sql). The Android app has the same
+   game written in Kotlin - the rules here and there are kept the same. */
+:root{ --ink:#eef1ff; --soft:#a5adcf; }
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#070816;color:var(--ink);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
+#c{position:fixed;inset:0;width:100%;height:100%;display:block}
+.top{position:fixed;left:0;right:0;top:0;z-index:5;display:flex;align-items:center;gap:8px;padding:calc(10px + env(safe-area-inset-top)) 14px 10px;pointer-events:none}
+.top > *{pointer-events:auto}
+.chip{padding:6px 12px;border-radius:999px;background:rgba(10,12,30,.55);border:1px solid rgba(255,255,255,.12);font-weight:800;font-size:.9rem;white-space:nowrap;backdrop-filter:blur(6px);font-variant-numeric:tabular-nums}
+.chip.warn{background:#b45309}
+.sp{flex:1}
+.ibtn{display:grid;place-items:center;width:40px;height:40px;border-radius:50%;background:rgba(10,12,30,.55);border:1px solid rgba(255,255,255,.12);color:#fff;text-decoration:none;font-size:1.05rem;cursor:pointer;padding:0}
+.over{position:fixed;inset:0;z-index:6;display:grid;place-items:center;background:rgba(5,6,18,.55);padding:20px}
+.over[hidden]{display:none}
+.card{max-width:430px;width:100%;text-align:center;padding:28px 22px 24px;border-radius:24px;background:rgba(16,18,42,.94);border:1px solid rgba(255,255,255,.12);box-shadow:0 30px 80px -30px #000}
+.card h1{margin:0 0 4px;font-size:2.3rem;letter-spacing:-.02em;background:linear-gradient(90deg,#fbbf24,#f472b6,#a78bfa,#38bdf8);-webkit-background-clip:text;background-clip:text;color:transparent}
+.card p{color:var(--soft);margin:6px 0}
+.how{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0 6px;text-align:left}
+.how div{background:rgba(255,255,255,.06);border-radius:12px;padding:8px 10px;font-size:.84rem;color:var(--soft)}
+.how b{color:var(--ink);display:block;font-size:.9rem}
+.btn{border:0;border-radius:16px;padding:14px 26px;font:800 1.1rem system-ui,sans-serif;cursor:pointer;background:linear-gradient(90deg,#f59e0b,#ec4899);color:#fff;margin:10px 4px 0;box-shadow:0 10px 24px -10px #ec4899}
+.btn.ghost{background:rgba(255,255,255,.12);box-shadow:none}
+.btn[disabled]{opacity:.5;cursor:default}
+.big{font-size:3rem;font-weight:900;margin:2px 0;font-variant-numeric:tabular-nums}
+.row{display:flex;justify-content:center;gap:18px;margin:6px 0 2px;color:var(--soft);font-size:.9rem}
+.row b{color:var(--ink);display:block;font-size:1.2rem}
+.newbest{display:inline-block;margin-top:6px;padding:4px 12px;border-radius:999px;background:linear-gradient(90deg,#f59e0b,#ec4899);color:#fff;font-weight:800;font-size:.85rem}
+.small{font-size:.8rem !important;margin-top:14px !important}
+#zone{position:fixed;left:0;right:0;top:32%;z-index:4;text-align:center;pointer-events:none;opacity:0;transition:opacity .4s;font-weight:900;font-size:clamp(1.4rem,4vw,2.4rem);text-shadow:0 4px 24px rgba(0,0,0,.6)}
+#zone small{display:block;font-size:.45em;font-weight:700;color:var(--soft);letter-spacing:.2em;text-transform:uppercase}
+#hold{position:fixed;left:0;right:0;bottom:calc(26px + env(safe-area-inset-bottom));z-index:4;text-align:center;color:var(--soft);font-weight:700;pointer-events:none;transition:opacity .5s}
+@media (prefers-reduced-motion:reduce){ #zone{transition:none} }
+</style>
+<script src="https://civilinitiatives.org/auth-store.js?b=20261026a"></script>
+<script src="https://civilinitiatives.org/games-gate.js?b=20261027h" data-kind="fun"></script>
+<script src="https://civilinitiatives.org/earn.js?b=20261028b"></script>
+</head>
+<body>
+<canvas id="c" aria-label="Rocket Rush game"></canvas>
+<div class="top">
+  <span class="chip" id="distChip">0 m</span>
+  <span class="chip" id="starChip">⭐ 0</span>
+  <span class="chip" id="puChip" hidden></span>
+  <div class="sp"></div>
+  <span class="chip" id="timeChip" title="Play time">⏱️ …</span>
+  <button class="ibtn" id="mute" type="button" aria-label="Sound on or off">🔊</button>
+  <a class="ibtn" id="close" href="https://arcade.civilinitiatives.org/" aria-label="Back to the Arcade">✕</a>
+</div>
+<div id="zone"></div>
+<div id="hold" hidden>Hold to fly · let go to drop</div>
+
+<div class="over" id="start"><div class="card">
+  <h1>🚀 Rocket Rush</h1>
+  <p>Fly as far as you can through space.</p>
+  <div class="how">
+    <div><b>Hold</b>anywhere (or Space) to fly up. Let go to drop.</div>
+    <div><b>⭐ Stars</b>are worth 5 points each.</div>
+    <div><b>⚡ Zappers, 🪨 rocks, 🧱 gates</b>end your run.</div>
+    <div><b>Power-ups</b>🛡 shield · 🧲 magnet · 🔥 boost</div>
+  </div>
+  <p id="best"></p>
+  <button type="button" class="btn" id="go">Play</button>
+  <p class="small">Your first 30 minutes each day are free. After that it's 5p for each extra half hour.</p>
+</div></div>
+
+<div class="over" id="dead" hidden><div class="card">
+  <p id="deadWhy">Crashed!</p>
+  <div class="big" id="final">0</div>
+  <div class="row"><span><b id="fDist">0 m</b>distance</span><span><b id="fStars">0</b>stars</span><span><b id="fZone">1</b>zone</span></div>
+  <div id="fBest"></div>
+  <button type="button" class="btn" id="again">Fly again</button>
+  <p class="small" id="fPence"></p>
+</div></div>
+
+<div class="over" id="pay" hidden><div class="card">
+  <h1 style="font-size:1.7rem">Time's up for now</h1>
+  <p id="payMsg">You've had today's free half hour.</p>
+  <p>Keep playing: <b>5p for 30 more minutes</b>.</p>
+  <button type="button" class="btn" id="buy">Pay 5p</button>
+  <a class="btn ghost" href="https://arcade.civilinitiatives.org/" style="display:inline-block;text-decoration:none">Stop for today</a>
+  <p class="small">Earn pence with right answers in the learning games. Free time comes back tomorrow.</p>
+</div></div>
+
+<script>
+(function(){
+"use strict";
+/* ================= play time (the server keeps count) ================= */
+var FN = "https://hehs-live.duckdns.org/functions/v1/profile";
+var KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzkyODMyMjkwLCJleHAiOjIxMDgxOTIyOTB9.7gFhQa5RBwVtiOPLO7Qf2-aVEbkd5xgpLiN1J06Gybo";
+function token(){
+  try {
+    var raw = (window.HEHAuth && window.HEHAuth.get) ? window.HEHAuth.get("sb-hehs-live-auth-token") : localStorage.getItem("sb-hehs-live-auth-token");
+    var s = JSON.parse(raw || "null"); return s && s.access_token || null;
+  } catch(e){ return null; }
+}
+function fn(body){
+  var t = token();
+  if (!t) return Promise.reject(new Error("Sign in on the Launchpad first."));
+  return fetch(FN, { method:"POST", headers:{ Authorization:"Bearer " + t, apikey:KEY, "content-type":"application/json" }, body:JSON.stringify(body) })
+    .then(function(r){ return r.json().then(function(j){ if (!r.ok || j.error) throw new Error(j.error || "Something went wrong."); return j; }); });
+}
+var $ = function(id){ return document.getElementById(id); };
+var left = null, leftAt = 0, free = 1, playing = false, timeChip = $("timeChip");
+function showTime(){
+  if (left == null) return;
+  var l = Math.max(0, left - (playing ? (Date.now() - leftAt) / 1000 : 0));
+  timeChip.textContent = "⏱️ " + Math.floor(l / 60) + ":" + String(Math.floor(l % 60)).padStart(2, "0") + (free > 0 ? " free" : " left");
+  timeChip.classList.toggle("warn", l < 120);
+  if (playing && l <= 0) outOfTime();
+}
+function apply(j){ left = j.left; free = j.free; leftAt = Date.now(); showTime(); }
+var played = 0;
+function tick(){
+  var sec = Math.round(played); played = 0;
+  return fn({ action:"playTime", sec: sec }).then(function(j){ apply(j); if (j.left <= 0 && playing) outOfTime(); return j; })
+    .catch(function(){ timeChip.textContent = "⏱️ ?"; });
+}
+setInterval(function(){ if (playing && !document.hidden) tick(); }, 30000);
+setInterval(showTime, 1000);
+function outOfTime(){
+  if (!$("pay").hidden) return;
+  playing = false; paused = true; tick(); $("pay").hidden = false;
+}
+$("buy").addEventListener("click", function(){
+  var b = this; b.disabled = true;
+  fn({ action:"playBuy" }).then(function(j){ apply(j); $("pay").hidden = true; b.disabled = false; paused = false; if (state === "fly") playing = true; })
+    .catch(function(e){ $("payMsg").textContent = e.message; b.disabled = false; });
+});
+
+/* ================= sound (tiny synth, no files) ================= */
+var actx = null, muted = false;
+try { muted = localStorage.getItem("hl.rush.mute") === "1"; } catch(e){}
+$("mute").textContent = muted ? "🔇" : "🔊";
+$("mute").addEventListener("click", function(){ muted = !muted; this.textContent = muted ? "🔇" : "🔊"; try { localStorage.setItem("hl.rush.mute", muted ? "1" : "0"); } catch(e){} });
+function beep(f, d, type, vol, slide){
+  if (muted) return;
+  try {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    var o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime;
+    o.type = type || "sine"; o.frequency.setValueAtTime(f, t);
+    if (slide) o.frequency.exponentialRampToValueAtTime(slide, t + d);
+    g.gain.setValueAtTime(vol || .08, t); g.gain.exponentialRampToValueAtTime(.0001, t + d);
+    o.connect(g); g.connect(actx.destination); o.start(t); o.stop(t + d);
+  } catch(e){}
+}
+var sfx = {
+  star: function(n){ beep(880 + (n % 5) * 110, .09, "triangle", .07); },
+  power: function(){ beep(520, .25, "square", .05, 1400); },
+  shield: function(){ beep(300, .3, "sawtooth", .06, 120); },
+  crash: function(){ beep(200, .6, "sawtooth", .1, 40); beep(90, .7, "square", .06, 30); },
+  zone: function(){ beep(440, .15, "triangle", .06); setTimeout(function(){ beep(660, .2, "triangle", .06); }, 120); }
+};
+
+/* ================= the game ================= */
+/* World units: the screen is always 1000 units tall; its width depends on
+   the shape of the screen. Speeds are units per second. */
+var H = 1000, W = 1600, scale = 1, dpr = 1;
+var canvas = $("c"), ctx = canvas.getContext("2d");
+function resize(){
+  dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = Math.round(innerWidth * dpr); canvas.height = Math.round(innerHeight * dpr);
+  scale = canvas.height / H; W = canvas.width / scale;
+}
+addEventListener("resize", resize); resize();
+
+var ZONES = [
+  { name:"Launch Bay",     top:"#0b1030", bot:"#1b1f4f", zap:"#38bdf8", star:"#c7d2fe", planet:"#6366f1" },
+  { name:"Asteroid Belt",  top:"#1a0f0a", bot:"#3b2414", zap:"#fb923c", star:"#fde68a", planet:"#b45309" },
+  { name:"Pink Nebula",    top:"#2a0a2e", bot:"#5b1150", zap:"#f472b6", star:"#fbcfe8", planet:"#db2777" },
+  { name:"Ion Storm",      top:"#04201f", bot:"#0b3b3a", zap:"#2dd4bf", star:"#99f6e4", planet:"#0d9488" },
+  { name:"Deep Space",     top:"#020208", bot:"#0c0c22", zap:"#a78bfa", star:"#ffffff", planet:"#4c1d95" }
+];
+var ZONE_LEN = 1500;           // metres per zone
+var M = 40;                    // units per metre
+
+var R = { x:0, y:500, vy:0, r:34, thrust:false, tilt:0 };
+var state = "menu", paused = false;
+var dist = 0, speed = 0, starsGot = 0, zoneIx = 0, shake = 0, deadAt = 0, deadWhy = "";
+var things = [], parts = [], pops = [], nextAt = 0, sinceStar = 0;
+var shieldOn = false, magnetT = 0, boostT = 0, invulnT = 0, puGap = 0;
+var bgLayers = [];
+function makeBg(){
+  bgLayers = [0.08, 0.22, 0.5].map(function(sp, k){
+    var arr = [];
+    for (var i = 0; i < 60 + k * 10; i++) arr.push({ x: Math.random() * 3000, y: Math.random() * H, s: 1 + k * .9 + Math.random() * 1.2 });
+    return { sp: sp, stars: arr };
+  });
+}
+makeBg();
+
+function rnd(a, b){ return a + Math.random() * (b - a); }
+function pick(arr){ return arr[Math.floor(Math.random() * arr.length)]; }
+function meters(){ return Math.floor(dist / M); }
+function score(){ return meters() + starsGot * 5; }
+function diff(){ return Math.min(1, meters() / 4000); }        // 0 at the start, 1 at 4 km
+
+function reset(){
+  R.x = Math.max(220, W * .24); R.y = 520; R.vy = 0; R.tilt = 0; R.thrust = false;
+  dist = 0; speed = 430; starsGot = 0; zoneIx = 0; shake = 0;
+  things = []; parts = []; pops = []; nextAt = W + 300; sinceStar = 0;
+  shieldOn = false; magnetT = 0; boostT = 0; invulnT = 1.2; puGap = 2200;
+  $("puChip").hidden = true;
+}
+
+/* ---------- spawning: one "chunk" at a time, ahead of the screen ---------- */
+function addStar(x, y){ things.push({ k:"star", x:x, y:y, r:22, t:Math.random() * 6 }); }
+function starLine(x, y, n){ for (var i = 0; i < n; i++) addStar(x + i * 60, y); return n * 60; }
+function starWave(x, y, n){ for (var i = 0; i < n; i++) addStar(x + i * 58, y + Math.sin(i / 2) * 120); return n * 58; }
+function zapper(x, y, len, ang, spin){ things.push({ k:"zap", x:x, y:y, len:len, a:ang, spin:spin || 0 }); }
+function rock(x, y, r, vy){
+  var pts = []; for (var i = 0; i < 11; i++) pts.push(r * rnd(.78, 1.08));
+  things.push({ k:"rock", x:x, y:y, r:r, vy:vy, a:Math.random() * 6, va:rnd(-1, 1), pts:pts });
+}
+function gate(x, gapY, gap){ things.push({ k:"gate", x:x, w:70, gapY:gapY, gap:gap }); }
+function power(x, y){ things.push({ k:"pu", x:x, y:y, r:34, type: pick(["shield", "magnet", "boost"]), t:0 }); }
+
+function spawnChunk(x){
+  var d = diff(), w = 0;
+  var roll = Math.random();
+  if (puGap <= 0) { power(x + 120, rnd(220, 780)); puGap = rnd(6000, 10000); w = 360; return w; }
+  if (roll < .2) {                                   // stars only - a breather
+    w = Math.random() < .5 ? starLine(x, rnd(200, 800), 8) : starWave(x, rnd(300, 700), 10);
+  } else if (roll < .5) {                            // one zapper, with stars to tempt you
+    var vert = Math.random() < .45, len = rnd(240, 360 + d * 140);
+    var y = vert ? rnd(len / 2 + 60, H - len / 2 - 60) : rnd(160, 840);
+    var ang = vert ? Math.PI / 2 : (Math.random() < .5 ? 0 : (Math.random() < .5 ? .7 : -.7));
+    zapper(x + 120, y, len, ang, d > .35 && Math.random() < d * .5 ? rnd(.6, 1.4) * (Math.random() < .5 ? -1 : 1) : 0);
+    if (Math.random() < .7) starLine(x + 40, y < 500 ? Math.min(900, y + len / 2 + 110) : Math.max(100, y - len / 2 - 110), 5);
+    w = 520 - d * 120;
+  } else if (roll < .7) {                            // a gate with a gap
+    var gap = 330 - d * 90, gy = rnd(gap / 2 + 90, H - gap / 2 - 90);
+    gate(x + 140, gy, gap);
+    starLine(x + 70, gy, 4);
+    w = 560 - d * 120;
+  } else if (roll < .88) {                           // asteroids
+    var n = 2 + Math.floor(d * 2.5 + Math.random() * 1.5);
+    for (var i = 0; i < n; i++) rock(x + 100 + i * rnd(150, 230), rnd(120, 880), rnd(38, 64 + d * 20), rnd(-90, 90) * (.4 + d));
+    w = 160 + n * 200;
+  } else {                                           // two zappers with a way through
+    var gp = 320 - d * 70, cy = rnd(gp / 2 + 120, H - gp / 2 - 120);
+    zapper(x + 120, (cy - gp / 2) / 2, cy - gp / 2 - 40, Math.PI / 2, 0);
+    zapper(x + 120, cy + gp / 2 + (H - cy - gp / 2) / 2, H - cy - gp / 2 - 40, Math.PI / 2, 0);
+    addStar(x + 120, cy);
+    w = 520;
+  }
+  return w + rnd(140, 260) * (1.15 - d * .5);
+}
+
+/* ---------- collisions ---------- */
+function segDist(px, py, ax, ay, bx, by){
+  var dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy, t = l2 ? ((px - ax) * dx + (py - ay) * dy) / l2 : 0;
+  t = Math.max(0, Math.min(1, t)); var qx = ax + t * dx - px, qy = ay + t * dy - py;
+  return Math.sqrt(qx * qx + qy * qy);
+}
+function hits(t){
+  var rx = R.x, ry = R.y, rr = R.r * .82;
+  if (t.k === "zap") {
+    var c = Math.cos(t.a) * t.len / 2, s = Math.sin(t.a) * t.len / 2;
+    return segDist(rx, ry, t.x - c, t.y - s, t.x + c, t.y + s) < rr + 14;
+  }
+  if (t.k === "rock") { var dx = t.x - rx, dy = t.y - ry; return dx * dx + dy * dy < Math.pow(t.r * .85 + rr, 2); }
+  if (t.k === "gate") {
+    if (rx + rr < t.x - t.w / 2 || rx - rr > t.x + t.w / 2) return false;
+    return ry - rr < t.gapY - t.gap / 2 || ry + rr > t.gapY + t.gap / 2;
+  }
+  return false;
+}
+
+function burst(x, y, col, n, sp){
+  for (var i = 0; i < n; i++) { var a = Math.random() * 6.283, v = rnd(.3, 1) * sp; parts.push({ x:x, y:y, vx:Math.cos(a) * v, vy:Math.sin(a) * v, t:rnd(.4, .9), t0:1, c:col, s:rnd(3, 7) }); }
+}
+function pop(x, y, txt, col){ pops.push({ x:x, y:y, txt:txt, c:col || "#fde68a", t:.9 }); }
+
+function hit(t){
+  if (boostT > 0 || invulnT > 0) return;
+  if (shieldOn) {
+    shieldOn = false; invulnT = 1.2; shake = 14; sfx.shield();
+    burst(R.x, R.y, "#60a5fa", 30, 520);
+    if (t.k === "rock") { t.dead = true; burst(t.x, t.y, "#9ca3af", 24, 380); }
+    if (t.k === "zap") t.dead = true;
+    pop(R.x, R.y - 60, "Shield saved you!", "#93c5fd");
+    updatePu();
+    return;
+  }
+  die(t.k === "zap" ? "Zapped!" : t.k === "rock" ? "Hit an asteroid!" : "Hit a gate!");
+}
+
+function die(why){
+  if (state !== "fly") return;
+  state = "dead"; deadAt = performance.now(); deadWhy = why; playing = false; tick();
+  shake = 26; sfx.crash();
+  burst(R.x, R.y, "#fbbf24", 60, 700); burst(R.x, R.y, "#f43f5e", 40, 500); burst(R.x, R.y, "#e5e7eb", 30, 300);
+  setTimeout(showDead, 900);
+}
+function showDead(){
+  var sc = score(), best = 0;
+  try { best = +localStorage.getItem("hl.arc.rush") || 0; } catch(e){}
+  var isBest = sc > best;
+  if (isBest) { best = sc; try { localStorage.setItem("hl.arc.rush", String(sc)); } catch(e){} }
+  $("deadWhy").textContent = deadWhy;
+  $("final").textContent = sc.toLocaleString();
+  $("fDist").textContent = meters().toLocaleString() + " m";
+  $("fStars").textContent = starsGot;
+  $("fZone").textContent = (zoneIx + 1);
+  $("fBest").innerHTML = isBest && sc > 0 ? '<span class="newbest">🏆 New best!</span>' : '<p>Your best: ' + best.toLocaleString() + '</p>';
+  $("fPence").textContent = "";
+  if (sc > 0 && window.HEHEarn && HEHEarn.played) { try { HEHEarn.played("rush", sc); } catch(e){} }
+  $("dead").hidden = false;
+  setTimeout(function(){ $("again").focus(); }, 50);
+}
+
+function updatePu(){
+  var bits = [];
+  if (shieldOn) bits.push("🛡");
+  if (magnetT > 0) bits.push("🧲 " + Math.ceil(magnetT));
+  if (boostT > 0) bits.push("🔥 " + Math.ceil(boostT));
+  $("puChip").hidden = !bits.length; $("puChip").textContent = bits.join("  ");
+}
+function grab(p){
+  sfx.power(); burst(p.x, p.y, "#a78bfa", 26, 420);
+  if (p.type === "shield") { shieldOn = true; pop(p.x, p.y - 50, "🛡 Shield!"); }
+  if (p.type === "magnet") { magnetT = 8; pop(p.x, p.y - 50, "🧲 Magnet!"); }
+  if (p.type === "boost")  { boostT = 3; pop(p.x, p.y - 50, "🔥 Boost!"); }
+  updatePu();
+}
+
+function showZone(){
+  var z = ZONES[zoneIx % ZONES.length], el = $("zone");
+  el.innerHTML = "<small>Zone " + (zoneIx + 1) + "</small>" + z.name;
+  el.style.color = z.zap; el.style.opacity = 1; sfx.zone();
+  setTimeout(function(){ el.style.opacity = 0; }, 1600);
+}
+
+/* ---------- one step of the world ---------- */
+function update(dt){
+  if (invulnT > 0) invulnT -= dt;
+  if (magnetT > 0) { magnetT -= dt; if (magnetT <= 0) updatePu(); }
+  if (boostT > 0) { boostT -= dt; if (boostT <= 0) { updatePu(); invulnT = .8; } }
+  if (Math.floor(magnetT * 2) !== Math.floor((magnetT + dt) * 2) || Math.floor(boostT * 2) !== Math.floor((boostT + dt) * 2)) updatePu();
+
+  var target = 430 + Math.min(520, meters() * .13);
+  speed += (target - speed) * Math.min(1, dt * .5);
+  var v = speed * (boostT > 0 ? 2.1 : 1), mv = v * dt;
+  dist += mv; nextAt -= mv; puGap -= mv;
+  while (nextAt < W + 400) nextAt += spawnChunk(nextAt);
+
+  var z = Math.floor(meters() / ZONE_LEN);
+  if (z !== zoneIx) { zoneIx = z; showZone(); }
+
+  /* the rocket: hold = thrust up, let go = gravity */
+  var g = 2500, up = 5600;
+  if (boostT > 0) { R.vy += ((500 - R.y) * 6 - R.vy) * Math.min(1, dt * 4); }
+  else R.vy += (R.thrust ? -up + g : g) * dt;
+  R.vy = Math.max(-950, Math.min(1050, R.vy));
+  R.y += R.vy * dt;
+  if (R.y < 50) { R.y = 50; R.vy = Math.max(0, R.vy); }
+  if (R.y > H - 50) { R.y = H - 50; R.vy = Math.min(0, R.vy); }
+  R.tilt += ((R.vy / 1000) * .5 - R.tilt) * Math.min(1, dt * 10);
+
+  if (R.thrust || boostT > 0) for (var e = 0; e < (boostT > 0 ? 4 : 2); e++)
+    parts.push({ x:R.x - 44, y:R.y + rnd(-8, 8), vx:-rnd(300, 600) - v * .3, vy:rnd(-60, 60) + 200, t:rnd(.2, .45), t0:.45, c: boostT > 0 ? "#f97316" : pick(["#fbbf24", "#f97316", "#fde68a"]), s:rnd(5, 10) });
+
+  for (var i = things.length - 1; i >= 0; i--) {
+    var t = things[i];
+    t.x -= mv;
+    if (t.k === "rock") { t.y += t.vy * dt; t.a += t.va * dt; if (t.y < t.r || t.y > H - t.r) t.vy = -t.vy; }
+    if (t.k === "zap" && t.spin) t.a += t.spin * dt;
+    if (t.k === "star") {
+      t.t += dt * 4;
+      if (magnetT > 0) { var dx = R.x - t.x, dy = R.y - t.y, dd = Math.sqrt(dx * dx + dy * dy); if (dd < 360) { t.x += dx / dd * 900 * dt; t.y += dy / dd * 900 * dt; } }
+      var cx = t.x - R.x, cy = t.y - R.y;
+      if (cx * cx + cy * cy < Math.pow(t.r + R.r + 6, 2)) {
+        starsGot++; sfx.star(starsGot); burst(t.x, t.y, "#fde047", 10, 260); t.dead = true;
+      }
+    } else if (t.k === "pu") {
+      t.t += dt; var px = t.x - R.x, py = t.y - R.y;
+      if (px * px + py * py < Math.pow(t.r + R.r, 2)) { grab(t); t.dead = true; }
+    } else if (!t.dead && hits(t)) { hit(t); if (state !== "fly") return; }
+    if (t.dead || t.x < -500) things.splice(i, 1);
+  }
+}
+
+function updateFx(dt){
+  for (var i = parts.length - 1; i >= 0; i--) { var p = parts[i]; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 400 * dt; p.t -= dt; if (p.t <= 0) parts.splice(i, 1); }
+  for (var j = pops.length - 1; j >= 0; j--) { pops[j].y -= 60 * dt; pops[j].t -= dt; if (pops[j].t <= 0) pops.splice(j, 1); }
+  if (shake > 0) shake = Math.max(0, shake - 60 * dt);
+}
+
+/* ---------- drawing ---------- */
+function drawRocket(){
+  ctx.save(); ctx.translate(R.x, R.y); ctx.rotate(R.tilt); ctx.scale(1.2, 1.2);
+  var blink = (invulnT > 0 && Math.floor(invulnT * 12) % 2 === 0);
+  if (blink) ctx.globalAlpha = .45;
+  /* flame */
+  if (R.thrust || boostT > 0 || state === "menu") {
+    var fl = (boostT > 0 ? 70 : 40) + Math.random() * 18;
+    var gr = ctx.createLinearGradient(-36, 0, -36 - fl, 0);
+    gr.addColorStop(0, "#fff7ed"); gr.addColorStop(.35, "#fbbf24"); gr.addColorStop(1, "rgba(244,63,94,0)");
+    ctx.fillStyle = gr; ctx.beginPath(); ctx.moveTo(-34, -13); ctx.quadraticCurveTo(-36 - fl, 0, -34, 13); ctx.fill();
+  }
+  /* fins */
+  ctx.fillStyle = "#e11d48";
+  ctx.beginPath(); ctx.moveTo(-18, -14); ctx.lineTo(-40, -34); ctx.lineTo(-34, -10); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-18, 14); ctx.lineTo(-40, 34); ctx.lineTo(-34, 10); ctx.closePath(); ctx.fill();
+  /* body */
+  var bg = ctx.createLinearGradient(0, -20, 0, 20); bg.addColorStop(0, "#ffffff"); bg.addColorStop(1, "#c7d2fe");
+  ctx.fillStyle = bg; ctx.beginPath(); ctx.moveTo(48, 0); ctx.bezierCurveTo(30, -24, -10, -22, -36, -14); ctx.lineTo(-36, 14); ctx.bezierCurveTo(-10, 22, 30, 24, 48, 0); ctx.fill();
+  ctx.fillStyle = "#e11d48"; ctx.beginPath(); ctx.moveTo(48, 0); ctx.bezierCurveTo(40, -10, 30, -15, 24, -16); ctx.lineTo(24, 16); ctx.bezierCurveTo(30, 15, 40, 10, 48, 0); ctx.fill();
+  /* window */
+  ctx.fillStyle = "#1e3a8a"; ctx.beginPath(); ctx.arc(4, 0, 10, 0, 6.283); ctx.fill();
+  ctx.fillStyle = "#38bdf8"; ctx.beginPath(); ctx.arc(4, 0, 7, 0, 6.283); ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,.8)"; ctx.beginPath(); ctx.arc(1.5, -2.5, 2.5, 0, 6.283); ctx.fill();
+  ctx.globalAlpha = 1;
+  if (shieldOn) {
+    ctx.strokeStyle = "rgba(96,165,250,.9)"; ctx.lineWidth = 4; ctx.fillStyle = "rgba(96,165,250,.14)";
+    ctx.beginPath(); ctx.arc(4, 0, 58 + Math.sin(performance.now() / 120) * 3, 0, 6.283); ctx.fill(); ctx.stroke();
+  }
+  if (magnetT > 0) { ctx.strokeStyle = "rgba(244,114,182,.35)"; ctx.lineWidth = 2; ctx.setLineDash([8, 10]); ctx.beginPath(); ctx.arc(0, 0, 90 + (performance.now() / 8) % 40, 0, 6.283); ctx.stroke(); ctx.setLineDash([]); }
+  ctx.restore();
+}
+function drawStar(t){
+  var s = 1 + Math.sin(t.t) * .12;
+  ctx.save(); ctx.translate(t.x, t.y); ctx.rotate(t.t * .3); ctx.scale(s, s);
+  ctx.shadowColor = "#fde047"; ctx.shadowBlur = 16;
+  ctx.fillStyle = "#fde047"; ctx.beginPath();
+  for (var i = 0; i < 10; i++) { var r = i % 2 ? 9 : 21, a = i * Math.PI / 5 - Math.PI / 2; ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r); }
+  ctx.closePath(); ctx.fill(); ctx.shadowBlur = 0;
+  ctx.fillStyle = "#fffbeb"; ctx.beginPath(); ctx.arc(-3, -4, 4, 0, 6.283); ctx.fill();
+  ctx.restore();
+}
+function drawZap(t, col){
+  var c = Math.cos(t.a) * t.len / 2, s = Math.sin(t.a) * t.len / 2, ax = t.x - c, ay = t.y - s, bx = t.x + c, by = t.y + s;
+  ctx.save();
+  ctx.shadowColor = col; ctx.shadowBlur = 24; ctx.strokeStyle = col; ctx.lineWidth = 6; ctx.globalAlpha = .55;
+  ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+  ctx.globalAlpha = 1; ctx.lineWidth = 3; ctx.strokeStyle = "#ffffff"; ctx.beginPath(); ctx.moveTo(ax, ay);
+  var n = Math.max(4, Math.floor(t.len / 34)), nx = -s / (t.len / 2), ny = c / (t.len / 2);
+  for (var i = 1; i < n; i++) { var f = i / n, j = rnd(-12, 12); ctx.lineTo(ax + (bx - ax) * f + nx * j, ay + (by - ay) * f + ny * j); }
+  ctx.lineTo(bx, by); ctx.stroke();
+  [[ax, ay], [bx, by]].forEach(function(p){
+    var g = ctx.createRadialGradient(p[0] - 5, p[1] - 5, 2, p[0], p[1], 20); g.addColorStop(0, "#fff"); g.addColorStop(.5, col); g.addColorStop(1, "#111827");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(p[0], p[1], 19, 0, 6.283); ctx.fill();
+  });
+  ctx.restore();
+}
+function drawRock(t){
+  ctx.save(); ctx.translate(t.x, t.y); ctx.rotate(t.a);
+  var g = ctx.createRadialGradient(-t.r * .3, -t.r * .3, 4, 0, 0, t.r); g.addColorStop(0, "#a8a29e"); g.addColorStop(1, "#44403c");
+  ctx.fillStyle = g; ctx.beginPath();
+  for (var i = 0; i < t.pts.length; i++) { var a = i / t.pts.length * 6.283; ctx.lineTo(Math.cos(a) * t.pts[i], Math.sin(a) * t.pts[i]); }
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "rgba(0,0,0,.22)";
+  ctx.beginPath(); ctx.arc(t.r * .25, -t.r * .2, t.r * .22, 0, 6.283); ctx.fill();
+  ctx.beginPath(); ctx.arc(-t.r * .3, t.r * .3, t.r * .15, 0, 6.283); ctx.fill();
+  ctx.restore();
+}
+function drawGate(t, col){
+  var top = t.gapY - t.gap / 2, bot = t.gapY + t.gap / 2, x0 = t.x - t.w / 2;
+  ctx.save();
+  var g = ctx.createLinearGradient(x0, 0, x0 + t.w, 0); g.addColorStop(0, "#1f2937"); g.addColorStop(.5, "#4b5563"); g.addColorStop(1, "#111827");
+  ctx.fillStyle = g; ctx.fillRect(x0, -20, t.w, top + 20); ctx.fillRect(x0, bot, t.w, H - bot + 20);
+  ctx.shadowColor = col; ctx.shadowBlur = 18; ctx.fillStyle = col;
+  ctx.fillRect(x0 - 6, top - 14, t.w + 12, 14); ctx.fillRect(x0 - 6, bot, t.w + 12, 14);
+  ctx.shadowBlur = 0; ctx.fillStyle = "rgba(255,255,255,.08)";
+  for (var y = top - 70; y > -20; y -= 70) ctx.fillRect(x0 + 8, y, t.w - 16, 4);
+  for (var y2 = bot + 70; y2 < H; y2 += 70) ctx.fillRect(x0 + 8, y2, t.w - 16, 4);
+  ctx.restore();
+}
+function drawPu(t){
+  var b = Math.sin(t.t * 4) * 6;
+  ctx.save(); ctx.translate(t.x, t.y + b);
+  var col = t.type === "shield" ? "#60a5fa" : t.type === "magnet" ? "#f472b6" : "#f97316";
+  ctx.shadowColor = col; ctx.shadowBlur = 22; ctx.strokeStyle = col; ctx.lineWidth = 4; ctx.fillStyle = "rgba(255,255,255,.1)";
+  ctx.beginPath(); ctx.arc(0, 0, 34, 0, 6.283); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0;
+  ctx.font = "34px system-ui, 'Apple Color Emoji', 'Segoe UI Emoji'"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(t.type === "shield" ? "🛡" : t.type === "magnet" ? "🧲" : "🔥", 0, 2);
+  ctx.restore();
+}
+function draw(now){
+  var z = ZONES[zoneIx % ZONES.length];
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  var g = ctx.createLinearGradient(0, 0, 0, canvas.height); g.addColorStop(0, z.top); g.addColorStop(1, z.bot);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  var sx = shake ? rnd(-shake, shake) : 0, sy = shake ? rnd(-shake, shake) : 0;
+  ctx.setTransform(scale, 0, 0, scale, sx * scale, sy * scale);
+  /* far planet */
+  var px = W * .78 - (dist * .02) % (W + 600) , pr = 140;
+  if (px < -pr) px += W + 600;
+  ctx.save(); ctx.globalAlpha = .55;
+  var glow = ctx.createRadialGradient(px, 300, pr * .8, px, 300, pr * 1.6); glow.addColorStop(0, z.planet + "66"); glow.addColorStop(1, z.planet + "00");
+  ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(px, 300, pr * 1.6, 0, 6.283); ctx.fill();
+  var pg = ctx.createRadialGradient(px - pr * .45, 300 - pr * .45, pr * .1, px, 300, pr); pg.addColorStop(0, "#ffffffaa"); pg.addColorStop(.2, z.planet); pg.addColorStop(1, "#05060f");
+  ctx.fillStyle = pg; ctx.beginPath(); ctx.arc(px, 300, pr, 0, 6.283); ctx.fill();
+  ctx.strokeStyle = z.star; ctx.globalAlpha = .35; ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.ellipse(px, 300, pr * 1.7, pr * .32, -.35, 0, 6.283); ctx.stroke();
+  ctx.restore();
+  /* star layers */
+  bgLayers.forEach(function(L){
+    ctx.fillStyle = z.star; ctx.globalAlpha = .25 + L.sp;
+    L.stars.forEach(function(s){ var x = ((s.x - dist * L.sp) % 3000 + 3000) % 3000; if (x < W + 10) ctx.fillRect(x, s.y, s.s, s.s); });
+  });
+  ctx.globalAlpha = 1;
+  if (boostT > 0) { ctx.strokeStyle = "rgba(255,255,255,.25)"; ctx.lineWidth = 3; for (var k = 0; k < 14; k++) { var ly = (k * 73 + now * .9) % H; ctx.beginPath(); ctx.moveTo((k * 151 + now * 2) % W, ly); ctx.lineTo((k * 151 + now * 2) % W + 160, ly); ctx.stroke(); } }
+  for (var i = 0; i < things.length; i++) {
+    var t = things[i];
+    if (t.x < -200 || t.x > W + 300) continue;
+    if (t.k === "star") drawStar(t); else if (t.k === "zap") drawZap(t, z.zap); else if (t.k === "rock") drawRock(t); else if (t.k === "gate") drawGate(t, z.zap); else drawPu(t);
+  }
+  if (state !== "dead") drawRocket();
+  parts.forEach(function(p){ ctx.globalAlpha = Math.max(0, p.t / p.t0); ctx.fillStyle = p.c; ctx.beginPath(); ctx.arc(p.x, p.y, p.s * (p.t / p.t0 + .3), 0, 6.283); ctx.fill(); });
+  ctx.globalAlpha = 1;
+  ctx.font = "800 30px system-ui"; ctx.textAlign = "center";
+  pops.forEach(function(p){ ctx.globalAlpha = Math.min(1, p.t * 2); ctx.fillStyle = p.c; ctx.fillText(p.txt, p.x, p.y); });
+  ctx.globalAlpha = 1;
+}
+
+/* ---------- loop ---------- */
+var last = performance.now(), distChip = $("distChip"), starChip = $("starChip");
+function frame(now){
+  requestAnimationFrame(frame);
+  var dt = Math.min(.05, (now - last) / 1000); last = now;
+  if (state === "fly" && !paused) {
+    if (playing) played += dt;
+    update(dt);
+    distChip.textContent = meters().toLocaleString() + " m";
+    starChip.textContent = "⭐ " + starsGot;
+  } else if (state === "menu") {
+    dist += 120 * dt; R.y = 500 + Math.sin(now / 500) * 40; R.tilt = Math.sin(now / 700) * .1;
+  }
+  updateFx(dt);
+  draw(now);
+}
+
+/* ---------- controls: hold anywhere / Space / ↑ ---------- */
+function down(){ if (state === "fly") { R.thrust = true; $("hold").style.opacity = 0; } }
+function up(){ R.thrust = false; }
+canvas.addEventListener("pointerdown", function(e){ e.preventDefault(); down(); });
+addEventListener("pointerup", up); addEventListener("pointercancel", up); addEventListener("blur", up);
+addEventListener("keydown", function(e){
+  if (e.key === " " || e.key === "ArrowUp" || e.key === "w" || e.key === "W") {
+    e.preventDefault();
+    if (state === "fly") down();
+    else if (!$("start").hidden) start();
+    else if (!$("dead").hidden && performance.now() - deadAt > 1200) start();
+  }
+});
+addEventListener("keyup", function(e){ if (e.key === " " || e.key === "ArrowUp" || e.key === "w" || e.key === "W") up(); });
+
+function start(){
+  if (!$("pay").hidden) return;
+  reset(); state = "fly"; paused = false; playing = true; leftAt = Date.now();
+  $("start").hidden = true; $("dead").hidden = true;
+  var h = $("hold"); h.hidden = false; h.style.opacity = 1;
+  showZone();
+  if (left != null && left <= 0) outOfTime();
+}
+$("go").addEventListener("click", start);
+$("again").addEventListener("click", start);
+document.addEventListener("visibilitychange", function(){
+  if (document.hidden) { R.thrust = false; if (playing) { playing = false; tick(); } paused = true; }
+  else if (state === "fly" && $("pay").hidden) { paused = false; playing = true; leftAt = Date.now(); last = performance.now(); }
+});
+
+(function(){ var b = 0; try { b = +localStorage.getItem("hl.arc.rush") || 0; } catch(e){} $("best").textContent = b ? "Your best: " + b.toLocaleString() : ""; })();
+reset(); state = "menu";
+requestAnimationFrame(frame);
+
+/* how much time is left today (also counts nothing) */
+fn({ action:"playTime", sec: 0 }).then(apply).catch(function(){ timeChip.textContent = "⏱️ sign in"; });
+addEventListener("pagehide", function(){
+  if (played > 1) { var t = token(); if (t) fetch(FN, { method:"POST", keepalive:true, headers:{ Authorization:"Bearer " + t, apikey:KEY, "content-type":"application/json" }, body:JSON.stringify({ action:"playTime", sec: Math.round(played) }) }); }
+});
+})();
+</script>
+</body>
+</html>

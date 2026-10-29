@@ -611,13 +611,15 @@ window.addEventListener("pagehide", payRound);
 
 /* ---------- menu ---------- */
 var picks = document.getElementById("picks");
-/* The 3D one lives on its own page (it needs the whole screen). */
+/* Rocket Rush lives on its own page (it needs the whole screen). In the
+   Android app it opens the app's own native version instead. */
 (function(){
-  var a = document.createElement("a"); a.className = "pick"; a.href = "dash.html"; a.style.textDecoration = "none"; a.style.color = "inherit";
-  var ic = document.createElement("span"); ic.className = "ic"; ic.style.background = "linear-gradient(135deg,#06b6d4,#8b5cf6,#f472b6)"; ic.textContent = "🌌";
-  var n = document.createElement("b"); n.textContent = "Star Dash 3D ✨ New";
-  var sm = document.createElement("small"); sm.textContent = "Race through space in 3D - dodge, jump, grab the stars";
-  var e = document.createElement("em"); var best = read("hl.arc.dash3d", 0); e.textContent = best ? "Your best: " + best : "30 min free a day, then 5p per half hour";
+  var a = document.createElement("a"); a.className = "pick"; a.href = "rush.html"; a.style.textDecoration = "none"; a.style.color = "inherit";
+  if (window.LaunchpadApp && window.LaunchpadApp.openGame) a.addEventListener("click", function(e){ e.preventDefault(); window.LaunchpadApp.openGame("rush"); });
+  var ic = document.createElement("span"); ic.className = "ic"; ic.style.background = "linear-gradient(135deg,#f59e0b,#ec4899,#6366f1)"; ic.textContent = "🚀";
+  var n = document.createElement("b"); n.textContent = "Rocket Rush ✨ New";
+  var sm = document.createElement("small"); sm.textContent = "Hold to fly - dodge zappers, grab stars and power-ups";
+  var e = document.createElement("em"); var best = read("hl.arc.rush", 0); e.textContent = best ? "Your best: " + best : "30 min free a day, then 5p per half hour";
   a.appendChild(ic); a.appendChild(n); a.appendChild(sm); a.appendChild(e); picks.appendChild(a);
 })();
 GAMES.forEach(function(gm){
