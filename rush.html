@@ -17,7 +17,7 @@
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:#070816;color:var(--ink);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
 #c{position:fixed;inset:0;width:100%;height:100%;display:block}
-.top{position:fixed;left:0;right:0;top:0;z-index:5;display:flex;align-items:center;gap:8px;padding:calc(10px + env(safe-area-inset-top)) 14px 10px;pointer-events:none}
+.top{position:fixed;left:0;right:0;top:0;z-index:7;display:flex;align-items:center;gap:8px;padding:calc(10px + env(safe-area-inset-top)) 14px 10px;pointer-events:none}
 .top > *{pointer-events:auto}
 .chip{padding:6px 12px;border-radius:999px;background:rgba(10,12,30,.55);border:1px solid rgba(255,255,255,.12);font-weight:800;font-size:.9rem;white-space:nowrap;backdrop-filter:blur(6px);font-variant-numeric:tabular-nums}
 .chip.warn{background:#b45309}
@@ -46,6 +46,10 @@ html,body{margin:0;height:100%;background:#070816;color:var(--ink);font:16px/1.4
 #nogl{position:fixed;inset:0;display:grid;place-items:center;z-index:9;background:#070816;text-align:center;padding:24px}
 #nogl[hidden]{display:none}
 @media (prefers-reduced-motion:reduce){ #zone,#pop{transition:none} }
+/* the shared Launchpad glass look is for pages, not this game: keep the game's own dark cards and a clear top bar */
+html body .over > .card{background:rgba(16,18,42,.94)!important;border:1px solid rgba(255,255,255,.12)!important;box-shadow:0 30px 80px -30px #000!important;color:var(--ink);-webkit-backdrop-filter:none!important;backdrop-filter:none!important;border-radius:24px!important}
+html body .top{background:none!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;border:0!important;box-shadow:none!important}
+html body::before{display:none!important}
 </style>
 <script src="https://civilinitiatives.org/auth-store.js?b=20261026a"></script>
 <script src="https://civilinitiatives.org/games-gate.js?b=20261027h" data-kind="fun"></script>
@@ -87,7 +91,7 @@ html,body{margin:0;height:100%;background:#070816;color:var(--ink);font:16px/1.4
 <div class="over" id="dead" hidden><div class="card">
   <p id="deadWhy">Crashed!</p>
   <div class="big" id="final">0</div>
-  <div class="row"><span><b id="fDist">0 m</b>distance</span><span><b id="fStars">0</b>stars</span><span><b id="fZone">1</b>zone</span></div>
+  <div class="row"><span><b id="fDist">0 m</b>distance</span><span><b id="fStars">0</b>stars</span><span><b id="fZone">1</b>zone</span><span><b id="fClose">0</b>close calls</span></div>
   <div id="fBest"></div>
   <button type="button" class="btn" id="again">Fly again</button>
   <p class="small" id="fPence"></p>
@@ -150,30 +154,176 @@ $("buy").addEventListener("click", function(){
     .catch(function(e){ $("payMsg").textContent = e.message; b.disabled = false; });
 });
 
-/* ================= sound (tiny synth, no files) ================= */
-var actx = null, muted = false;
-try { muted = localStorage.getItem("hl.rush.mute") === "1"; } catch(e){}
-$("mute").textContent = muted ? "🔇" : "🔊";
-$("mute").addEventListener("click", function(){ muted = !muted; this.textContent = muted ? "🔇" : "🔊"; try { localStorage.setItem("hl.rush.mute", muted ? "1" : "0"); } catch(e){} });
-function beep(f, d, type, vol, slide){
-  if (muted) return;
+/* ================= sound: music, engine and effects (all made live, no files) =================
+   Phones only allow sound after a tap, so the sound starts on the first tap or key press.
+   The speaker button goes: everything on -> effects only (no music) -> silent. */
+var SND = "all";
+try {
+  SND = localStorage.getItem("hl.rush.sound") || (localStorage.getItem("hl.rush.mute") === "1" ? "off" : "all");
+} catch(e){}
+if (["all", "sfx", "off"].indexOf(SND) < 0) SND = "all";
+var muted = SND === "off";
+var actx = null, master = null, musicBus = null, sfxBus = null, noiseBuf = null;
+function sndIcon(){
+  var b = $("mute");
+  b.textContent = SND === "all" ? "🔊" : SND === "sfx" ? "🔉" : "🔇";
+  b.title = SND === "all" ? "Sound: music and effects" : SND === "sfx" ? "Sound: effects only" : "Sound: off";
+  b.setAttribute("aria-label", b.title);
+}
+sndIcon();
+function audioOn(){
+  if (actx) { if (actx.state === "suspended" && !document.hidden) actx.resume(); return actx; }
   try {
-    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
-    var o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime;
+    actx = new (window.AudioContext || window.webkitAudioContext)();
+    var comp = actx.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 4;
+    master = actx.createGain(); master.gain.value = muted ? 0 : .9;
+    master.connect(comp); comp.connect(actx.destination);
+    musicBus = actx.createGain(); musicBus.gain.value = SND === "all" ? .55 : 0; musicBus.connect(master);
+    sfxBus = actx.createGain(); sfxBus.gain.value = 1; sfxBus.connect(master);
+    noiseBuf = actx.createBuffer(1, actx.sampleRate, actx.sampleRate);
+    var d = noiseBuf.getChannelData(0); for (var i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    if (actx.state === "suspended") actx.resume();
+  } catch(e){ actx = null; }
+  return actx;
+}
+["pointerdown", "keydown", "touchstart"].forEach(function(ev){ addEventListener(ev, audioOn, { passive: true }); });
+function setSnd(v){
+  SND = v; muted = v === "off";
+  try { localStorage.setItem("hl.rush.sound", v); localStorage.removeItem("hl.rush.mute"); } catch(e){}
+  sndIcon();
+  if (actx) {
+    var t = actx.currentTime;
+    master.gain.setTargetAtTime(muted ? 0 : .9, t, .05);
+    musicBus.gain.setTargetAtTime(v === "all" ? .55 : 0, t, .08);
+  }
+}
+$("mute").addEventListener("click", function(){ audioOn(); setSnd(SND === "all" ? "sfx" : SND === "sfx" ? "off" : "all"); });
+
+function tone(f, d, type, vol, slide, when, bus){
+  if (!actx || muted) return;
+  try {
+    var t = (when || actx.currentTime), o = actx.createOscillator(), g = actx.createGain();
     o.type = type || "sine"; o.frequency.setValueAtTime(f, t);
     if (slide) o.frequency.exponentialRampToValueAtTime(slide, t + d);
-    g.gain.setValueAtTime(vol || .08, t); g.gain.exponentialRampToValueAtTime(.0001, t + d);
-    o.connect(g); g.connect(actx.destination); o.start(t); o.stop(t + d);
+    g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(vol || .08, t + .006);
+    g.gain.exponentialRampToValueAtTime(.0001, t + d);
+    o.connect(g); g.connect(bus || sfxBus); o.start(t); o.stop(t + d + .02);
   } catch(e){}
 }
+function noise(d, vol, fType, fFreq, fTo, when, bus){
+  if (!actx || muted) return;
+  try {
+    var t = (when || actx.currentTime), src = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain();
+    src.buffer = noiseBuf; f.type = fType || "lowpass"; f.frequency.setValueAtTime(fFreq || 2000, t);
+    if (fTo) f.frequency.exponentialRampToValueAtTime(fTo, t + d);
+    g.gain.setValueAtTime(vol || .1, t); g.gain.exponentialRampToValueAtTime(.0001, t + d);
+    src.connect(f); f.connect(g); g.connect(bus || sfxBus); src.start(t, Math.random() * .5); src.stop(t + d + .02);
+  } catch(e){}
+}
+function beep(f, d, type, vol, slide){ audioOn(); tone(f, d, type, vol, slide); }   // older calls
+
+/* ---- the engine: a low hum that rises with speed and roars on boost ---- */
+var eng = null;
+function engineOn(){
+  if (!audioOn() || eng) return;
+  try {
+    var o1 = actx.createOscillator(), o2 = actx.createOscillator(), f = actx.createBiquadFilter(), g = actx.createGain();
+    o1.type = "sawtooth"; o2.type = "sawtooth"; o2.detune.value = 14;
+    f.type = "lowpass"; f.frequency.value = 380; f.Q.value = 2;
+    g.gain.value = .0001;
+    o1.connect(f); o2.connect(f); f.connect(g); g.connect(sfxBus); o1.start(); o2.start();
+    eng = { o1: o1, o2: o2, f: f, g: g };
+    g.gain.setTargetAtTime(.05, actx.currentTime, .3);
+  } catch(e){}
+}
+function engineOff(){
+  if (!eng) return;
+  var e = eng; eng = null;
+  try { e.g.gain.setTargetAtTime(.0001, actx.currentTime, .08); setTimeout(function(){ try { e.o1.stop(); e.o2.stop(); } catch(x){} }, 500); } catch(x){}
+}
+function engineTick(sp, boost){
+  if (!eng) return;
+  var t = actx.currentTime, base = 42 + sp * 1.6 + (boost ? 30 : 0);
+  eng.o1.frequency.setTargetAtTime(base, t, .2); eng.o2.frequency.setTargetAtTime(base * 1.5, t, .2);
+  eng.f.frequency.setTargetAtTime(boost ? 1400 : 300 + sp * 14, t, .15);
+  eng.g.gain.setTargetAtTime(boost ? .08 : .045, t, .2);
+}
+
+/* ---- the music: drums, bass and a tune, a different key and feel for each zone,
+        and a little faster the faster you fly ---- */
+var SONGS = [
+  { root: 57, chords: [0, -4, -2, 3],  scale: [0, 3, 5, 7, 10, 12],  lead: "square" },     // Launch Bay: A minor, punchy
+  { root: 52, chords: [0, 3, -2, 5],   scale: [0, 2, 3, 7, 8, 12],   lead: "sawtooth" },   // Asteroid Belt: E, heavier
+  { root: 60, chords: [0, 5, -3, 7],   scale: [0, 2, 4, 7, 9, 12],   lead: "triangle" },   // bright major
+  { root: 55, chords: [0, -5, -2, -7], scale: [0, 3, 5, 6, 7, 10],   lead: "square" },     // tense blues
+  { root: 50, chords: [0, 1, -2, 3],   scale: [0, 1, 5, 7, 8, 12],   lead: "sawtooth" }    // Deep Space: eerie
+];
+function mtof(m){ return 440 * Math.pow(2, (m - 69) / 12); }
+var mus = { on: false, step: 0, next: 0, timer: 0, song: 0, mode: "menu", seed: 1 };
+var ARP = [0, 2, 4, 2, 1, 3, 5, 3, 0, 4, 2, 5, 1, 3, 4, 2];
+function musicNote(step, t){
+  var S = SONGS[mus.song % SONGS.length], bar = Math.floor(step / 16) % 4, s = step % 16;
+  var ch = S.root + S.chords[bar];
+  var B = musicBus;
+  if (mus.mode === "menu") {
+    if (s % 4 === 0) tone(mtof(ch - 12), .9, "triangle", .05, 0, t, B);
+    if (s % 2 === 0) tone(mtof(ch + 12 + S.scale[ARP[s] % S.scale.length]), .35, "sine", .03, 0, t, B);
+    return;
+  }
+  // kick
+  if (s % 4 === 0) tone(150, .22, "sine", .32, 42, t, B);
+  // snare-ish clap on 4 and 12
+  if (s === 4 || s === 12) noise(.14, .12, "bandpass", 1800, 900, t, B);
+  // hats
+  if (s % 2 === 1) noise(.04, .05, "highpass", 7000, 0, t, B);
+  // bass: on and off the beat
+  if (s % 4 === 0 || s % 4 === 3) tone(mtof(ch - 24 + (s % 8 === 7 ? 7 : 0)), .2, "sawtooth", .07, 0, t, B);
+  // the tune: arpeggio over the scale, busier in later zones
+  var busy = Math.min(1, .55 + mus.song * .1);
+  var r = (Math.sin(step * 12.9898 + mus.seed) * 43758.5453) % 1;
+  if (s % 2 === 0 || Math.abs(r) < busy * .4) tone(mtof(ch + 12 + S.scale[ARP[s] % S.scale.length]), .16, S.lead, .03, 0, t, B);
+}
+function musicLoop(){
+  if (!mus.on || !actx) return;
+  var bpm = mus.mode === "menu" ? 92 : Math.min(150, 112 + (typeof speed === "number" ? (speed - 16) * 1.6 : 0)), stepLen = 60 / bpm / 4;
+  while (mus.next < actx.currentTime + .15) {
+    if (SND === "all" && !muted) musicNote(mus.step, mus.next);
+    mus.step++; mus.next += stepLen;
+  }
+}
+function musicStart(mode){
+  if (!audioOn()) return;
+  mus.mode = mode || "fly";
+  if (!mus.on) { mus.on = true; mus.step = 0; mus.next = actx.currentTime + .05; mus.timer = setInterval(musicLoop, 30); }
+}
+function musicStop(){ mus.on = false; clearInterval(mus.timer); }
+function musicZone(ix){ mus.song = ix; mus.seed = ix * 7.13 + 1; mus.step = Math.ceil(mus.step / 16) * 16; }
+
+/* ---- effects ---- */
+var combo = 0, comboAt = 0;
 var sfx = {
-  star: function(n){ beep(880 + (n % 5) * 110, .09, "triangle", .07); },
-  power: function(){ beep(520, .25, "square", .05, 1400); },
-  shield: function(){ beep(300, .3, "sawtooth", .06, 120); },
-  crash: function(){ beep(200, .6, "sawtooth", .1, 40); beep(90, .7, "square", .06, 30); },
-  zone: function(){ beep(440, .15, "triangle", .06); setTimeout(function(){ beep(660, .2, "triangle", .06); }, 120); },
-  whoosh: function(){ beep(180, .25, "sine", .035, 90); }
+  star: function(){
+    audioOn();
+    var now = performance.now(); combo = now - comboAt < 900 ? Math.min(combo + 1, 12) : 0; comboAt = now;
+    var f = 880 * Math.pow(2, Math.min(combo, 12) / 12);
+    tone(f, .12, "triangle", .07); tone(f * 2, .18, "sine", .03, 0, actx && actx.currentTime + .05);
+    if (combo >= 4 && combo % 2 === 0) pop("⭐ Combo x" + (combo + 1) + "!", "#fde047");
+  },
+  power: function(){ audioOn(); if (!actx) return; var t = actx.currentTime; [0, 4, 7, 12].forEach(function(n, i){ tone(mtof(72 + n), .14, "square", .045, 0, t + i * .06); }); buzz(25); },
+  shield: function(){ audioOn(); tone(300, .35, "sawtooth", .07, 90); noise(.3, .12, "lowpass", 2500, 300); buzz(60); },
+  crash: function(){
+    audioOn(); engineOff(); musicStop();
+    noise(1.1, .35, "lowpass", 3000, 80); tone(160, .9, "sawtooth", .12, 30); tone(90, 1, "square", .07, 25);
+    if (actx) { var t = actx.currentTime + .7; [0, -3, -7].forEach(function(n, i){ tone(mtof(57 + n), .5, "triangle", .05, 0, t + i * .18, musicBus); }); }
+    buzz([90, 40, 140]);
+  },
+  zone: function(){ audioOn(); if (!actx) return; var t = actx.currentTime; [0, 7, 12, 16].forEach(function(n, i){ tone(mtof(64 + n), .22, "triangle", .06, 0, t + i * .09); }); },
+  whoosh: function(){ audioOn(); noise(.5, .16, "bandpass", 600, 3500); },
+  close: function(){ audioOn(); noise(.28, .1, "bandpass", 2400, 500); tone(1320, .08, "sine", .03); },
+  go: function(){ audioOn(); if (!actx) return; var t = actx.currentTime; tone(523, .1, "square", .05, 0, t); tone(784, .18, "square", .05, 0, t + .1); }
 };
+function buzz(p){ try { if (!muted && navigator.vibrate && matchMedia("(pointer:coarse)").matches) navigator.vibrate(p); } catch(e){} }
+document.addEventListener("visibilitychange", function(){ if (!actx) return; if (document.hidden) actx.suspend(); else actx.resume(); });
 
 /* ================= how fancy to draw =================
    low  - phones: no glow pass, fewer particles and stars, lower resolution
@@ -511,6 +661,22 @@ function hits(t){
   return false;
 }
 
+/* close calls: flying past something with almost no room to spare (just for show, the score
+   rules stay the same as the apps) */
+var closeCalls = 0, closeAt = 0;
+function nearMiss(t){
+  if (boostT > 0 || invulnT > 0) return false;
+  if (t.k === "wall") { var m = t.hs - RR * .8; return Math.max(Math.abs(R.x - t.hx), Math.abs(R.y - t.hy)) > m - .75; }
+  if (t.k === "rock") { var ex = t.x - R.x, ey = t.y - R.y; return Math.sqrt(ex * ex + ey * ey) < t.r * .82 + RR * .8 + .9; }
+  if (t.k === "zap") { var c = Math.cos(t.a) * t.len / 2, s = Math.sin(t.a) * t.len / 2; return segDist(R.x, R.y, t.x - c, t.y - s, t.x + c, t.y + s) < RR + .2 + .8; }
+  return false;
+}
+function closeCall(){
+  var now = performance.now(); if (now - closeAt < 500) return; closeAt = now;
+  closeCalls++; sfx.close(); buzz(15);
+  pop(closeCalls % 5 === 0 ? "😮 " + closeCalls + " close calls!" : "Close call!", "#a5f3fc");
+}
+
 var popTimer = 0;
 function pop(txt, col){
   var el = $("pop"); el.textContent = txt; el.style.color = col || "#fde68a";
@@ -557,6 +723,7 @@ function showDead(){
   $("fDist").textContent = meters().toLocaleString() + " m";
   $("fStars").textContent = starsGot;
   $("fZone").textContent = (zoneIx + 1);
+  $("fClose").textContent = closeCalls;
   $("fBest").innerHTML = isBest && sc > 0 ? '<span class="newbest">🏆 New best!</span>' : '<p>Your best: ' + best.toLocaleString() + '</p>';
   $("fPence").textContent = "";
   if (sc > 0 && window.HEHEarn && HEHEarn.played) { try { HEHEarn.played("rush", sc); } catch(e){} }
@@ -644,7 +811,8 @@ function update(dt){
   while (nextZ < dist + VIEW) nextZ += spawnChunk(nextZ);
 
   var z = Math.floor(meters() / ZONE_LEN);
-  if (z !== zoneIx) { zoneIx = z; setZone(z); showZone(); }
+  if (z !== zoneIx) { zoneIx = z; setZone(z); showZone(); musicZone(z); }
+  engineTick(speed, boostT > 0);
 
   /* steering: the rocket chases where you point */
   if (keys.l || keys.r || keys.u || keys.d) { R.tx += (keys.r - keys.l) * 13 * dt; R.ty += (keys.u - keys.d) * 11 * dt; clampT(); }
@@ -680,6 +848,7 @@ function update(dt){
       t.t += dt; var px = t.x - R.x, py = t.y - R.y, pz = t.z - dist;
       if (px * px + py * py + pz * pz < 2.1 * 2.1) { grab(t); t.dead = true; }
     } else if (!t.dead && hits(t)) { hit(t); if (state !== "fly") return; }
+    else if (!t.dead && !t.passed && t.z - dist < -1.1) { t.passed = true; if (nearMiss(t)) closeCall(); }
     if (t.dead || t.z < dist - 12) { scene.remove(t.mesh); things.splice(i, 1); }
   }
 }
@@ -774,10 +943,12 @@ function start(){
   ship.visible = true; lastDist = 0;
   $("start").hidden = true; $("dead").hidden = true;
   var h = $("hold"); h.hidden = false; h.style.opacity = 1;
-  showZone();
+  showZone(); closeCalls = 0; combo = 0;
+  sfx.go(); engineOn(); musicZone(0); musicStart("fly");
   if (left != null && left <= 0) outOfTime();
 }
 $("go").addEventListener("click", start);
+addEventListener("pointerdown", function once(){ removeEventListener("pointerdown", once); if (state === "menu" && !mus.on) musicStart("menu"); });
 $("again").addEventListener("click", start);
 document.addEventListener("visibilitychange", function(){
   if (document.hidden) { keys.l = keys.r = keys.u = keys.d = 0; if (playing) { playing = false; tick(); } paused = true; }
@@ -788,7 +959,7 @@ document.addEventListener("visibilitychange", function(){
 reset(); state = "menu";
 setupBloom();
 requestAnimationFrame(frame);
-window.__rush = { get state(){ return state; }, get dist(){ return dist; }, get things(){ return things.length; }, get q(){ return QUAL; }, R: R };
+window.__rush = { get state(){ return state; }, get dist(){ return dist; }, get things(){ return things.length; }, get q(){ return QUAL; }, get audio(){ return actx ? actx.state : "none"; }, get music(){ return mus.on; }, get engine(){ return !!eng; }, R: R };
 
 /* how much time is left today (also counts nothing) */
 fn({ action:"playTime", sec: 0 }).then(apply).catch(function(){ timeChip.textContent = "⏱️ sign in"; });
