@@ -60,7 +60,7 @@ canvas{background:#0b1022;border-radius:14px;max-width:100%;touch-action:none;di
     <div class="grid" id="picks"></div>
   </section>
   <section class="stage" id="stage" aria-live="polite">
-    <div class="hud"><span id="title"></span><span>Score <span id="score">0</span></span><span>Best <span id="best">0</span></span><button type="button" id="again">Restart</button></div>
+    <div class="hud"><span id="title"></span><span>Score <span id="score">0</span></span><span>Best <span id="best">0</span></span><button type="button" id="again">Restart</button><button type="button" id="sndBtn" aria-label="Sound">🔊</button></div>
     <canvas id="cv" width="480" height="560" tabindex="0" aria-label="Game area"></canvas>
     <div class="pad" id="pad"></div>
     <p class="help" id="help"></p>
@@ -75,9 +75,46 @@ var reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)")
 function read(k, d){ try { var v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch(e){ return d; } }
 function store(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} }
 var cur = null, raf = 0, keys = {}, score = 0;
-function setScore(n){ score = n; scoreEl.textContent = n; if (cur && n > read("hl.arc." + cur.id, 0)) { store("hl.arc." + cur.id, n); bestEl.textContent = n; } }
+/* ---- sound for every arcade game: made live, no files, starts after the first tap.
+   A point plays a blip that climbs if they come quickly; a new best plays a fanfare;
+   the game-over screen plays a short tune. The 🔊 button turns it off. ---- */
+var snd = { on: read("hl.arc.sound", "on") !== "off", ac: null, out: null, streak: 0, at: 0, overAt: 0, bestDone: false };
+function audio(){
+  if (snd.ac) { if (snd.ac.state === "suspended") snd.ac.resume(); return snd.ac; }
+  try { snd.ac = new (window.AudioContext || window.webkitAudioContext)(); snd.out = snd.ac.createGain(); snd.out.gain.value = .7; snd.out.connect(snd.ac.destination); } catch(e){ snd.ac = null; }
+  return snd.ac;
+}
+["pointerdown", "keydown", "touchstart"].forEach(function(ev){ addEventListener(ev, function(){ if (snd.on) audio(); }, { passive: true, capture: true }); });
+document.addEventListener("visibilitychange", function(){ if (snd.ac) { if (document.hidden) snd.ac.suspend(); else snd.ac.resume(); } });
+function note(f, d, type, vol, when, slide){
+  if (!snd.on || !audio()) return;
+  try { var t = snd.ac.currentTime + (when || 0), o = snd.ac.createOscillator(), gg = snd.ac.createGain();
+    o.type = type || "sine"; o.frequency.setValueAtTime(f, t); if (slide) o.frequency.exponentialRampToValueAtTime(slide, t + d);
+    gg.gain.setValueAtTime(.0001, t); gg.gain.exponentialRampToValueAtTime(vol || .07, t + .008); gg.gain.exponentialRampToValueAtTime(.0001, t + d);
+    o.connect(gg); gg.connect(snd.out); o.start(t); o.stop(t + d + .02); } catch(e){}
+}
+function mtof(m){ return 440 * Math.pow(2, (m - 69) / 12); }
+var SFX = {
+  point: function(){ var now = performance.now(); snd.streak = now - snd.at < 1500 ? Math.min(snd.streak + 1, 12) : 0; snd.at = now;
+    note(mtof(76 + snd.streak), .09, "square", .04); },
+  best: function(){ [0, 4, 7, 12].forEach(function(n, i){ note(mtof(72 + n), .14, "triangle", .06, i * .07); }); },
+  over: function(){ [0, -3, -7].forEach(function(n, i){ note(mtof(64 + n), .3, "triangle", .06, i * .15); }); try { if (navigator.vibrate && matchMedia("(pointer:coarse)").matches && snd.on) navigator.vibrate(80); } catch(e){} }
+};
+(function(){ var b = document.getElementById("sndBtn"); if (!b) return;
+  function paint(){ b.textContent = snd.on ? "🔊" : "🔇"; b.title = snd.on ? "Sound on" : "Sound off"; b.setAttribute("aria-label", b.title); }
+  b.addEventListener("click", function(){ snd.on = !snd.on; store("hl.arc.sound", snd.on ? "on" : "off"); paint(); if (snd.on) note(880, .1, "triangle", .06); });
+  paint(); })();
+function setScore(n){
+  if (n > score) SFX.point();
+  if (n === 0) { snd.bestDone = false; snd.streak = 0; }
+  score = n; scoreEl.textContent = n;
+  if (cur && n > read("hl.arc." + cur.id, 0)) {
+    if (!snd.bestDone && read("hl.arc." + cur.id, 0) > 0) { snd.bestDone = true; SFX.best(); }
+    store("hl.arc." + cur.id, n); bestEl.textContent = n;
+  }
+}
 function text(t, y, size, col){ g.fillStyle = col || "#fff"; g.font = "700 " + (size || 28) + "px system-ui,sans-serif"; g.textAlign = "center"; g.fillText(t, W/2, y); }
-function overlay(lines){ g.fillStyle = "rgba(5,8,20,.72)"; g.fillRect(0, 0, W, H); lines.forEach(function(l, i){ text(l, H/2 - 20 + i*40, i ? 20 : 34); }); }
+function overlay(lines){ var now = performance.now(); if (now - snd.overAt > 1200 && score > 0) SFX.over(); snd.overAt = now; g.fillStyle = "rgba(5,8,20,.72)"; g.fillRect(0, 0, W, H); lines.forEach(function(l, i){ text(l, H/2 - 20 + i*40, i ? 20 : 34); }); }
 
 /* ===================== Paper Plane =====================
    Tap / space to lift. Fly through the gaps in the clouds. */
